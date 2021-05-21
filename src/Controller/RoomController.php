@@ -24,24 +24,27 @@ use Symfony\Contracts\Translation\TranslatorInterface;
 class RoomController extends AbstractController
 {
     private $translator;
-
-    public function __construct(TranslatorInterface $translator)
+    private $userService;
+    private $serverUserManagment;
+    public function __construct(TranslatorInterface $translator,UserService $userService,ServerUserManagment $serverUserManagment)
     {
         $this->translator = $translator;
+        $this->userService = $userService;
+        $this->serverUserManagment = $serverUserManagment;
     }
 
     /**
      * @Route("/room/new", name="room_new")
      */
-    public function newRoom(SchedulingService $schedulingService, Request $request, UserService $userService, TranslatorInterface $translator, ServerUserManagment $serverUserManagment)
+    public function newRoom(SchedulingService $schedulingService, Request $request)
     {
         if ($request->get('id')) {
             $room = $this->getDoctrine()->getRepository(Rooms::class)->findOneBy(array('id' => $request->get('id')));
             if ($room->getModerator() !== $this->getUser()) {
-                return $this->redirectToRoute('dashboard', ['snack' => $translator->trans('Keine Berechtigung')]);
+                return $this->redirectToRoute('dashboard', ['snack' => $this->translator->trans('Keine Berechtigung')]);
             }
-            $snack = $translator->trans('Konferenz erfolgreich bearbeitet');
-            $title = $translator->trans('Konferenz bearbeiten');
+            $snack = $this->translator->trans('Konferenz erfolgreich bearbeitet');
+            $title = $this->translator->trans('Konferenz bearbeiten');
             $sequence = $room->getSequence() + 1;
             $room->setSequence($sequence);
             if (!$room->getUidModerator()) {
@@ -62,10 +65,10 @@ class RoomController extends AbstractController
             $room->setUidModerator(md5(uniqid('h2-invent', true)));
             $room->setUidParticipant(md5(uniqid('h2-invent', true)));
 
-            $snack = $translator->trans('Konferenz erfolgreich erstellt');
-            $title = $translator->trans('Neue Konferenz erstellen');
+            $snack = $this->translator->trans('Konferenz erfolgreich erstellt');
+            $title = $this->translator->trans('Neue Konferenz erstellen');
         }
-        $servers = $serverUserManagment->getServersFromUser($this->getUser());
+        $servers = $this->serverUserManagment->getServersFromUser($this->getUser());
 
 
         $form = $this->createForm(RoomType::class, $room, ['server' => $servers, 'action' => $this->generateUrl('room_new', ['id' => $room->getId()])]);
@@ -79,7 +82,7 @@ class RoomController extends AbstractController
 
                 $room = $form->getData();
                 if(!$room->getStart()){
-                    $snack = $translator->trans('Fehler, Bitte kontrollieren Sie ihre Daten.');
+                    $snack = $this->translator->trans('Fehler, Bitte kontrollieren Sie ihre Daten.');
                     return $this->redirectToRoute('dashboard', array('snack' => $snack, 'color' => 'danger'));
                 }
                 $room->setEnddate((clone $room->getStart())->modify('+ ' . $room->getDuration() . ' minutes'));
@@ -90,10 +93,10 @@ class RoomController extends AbstractController
 
                 if ($request->get('id')) {
                     foreach ($room->getUser() as $user) {
-                        $userService->editRoom($user, $room);
+                        $this->userService->editRoom($user, $room);
                     }
                 } else {
-                    $userService->addUser($room->getModerator(), $room);
+                    $this->userService->addUser($room->getModerator(), $room);
                 }
                 $modalUrl = base64_encode($this->generateUrl('room_add_user', array('room' => $room->getId())));
                 if ($room->getScheduleMeeting()) {
@@ -104,7 +107,7 @@ class RoomController extends AbstractController
 
             }
         } catch (\Exception $e) {
-            $snack = $translator->trans('Fehler, Bitte kontrollieren Sie ihre Daten.');
+            $snack = $this->translator->trans('Fehler, Bitte kontrollieren Sie ihre Daten.');
             return $this->redirectToRoute('dashboard', array('snack' => $snack, 'color' => 'danger'));
         }
         return $this->render('base/__newRoomModal.html.twig', array('form' => $form->createView(), 'title' => $title));
@@ -113,7 +116,7 @@ class RoomController extends AbstractController
     /**
      * @Route("/room/add-user", name="room_add_user")
      */
-    public function roomAddUser(Request $request, InviteService $inviteService, UserService $userService)
+    public function roomAddUser(Request $request, InviteService $inviteService)
     {
         $newMember = array();
         $room = $this->getDoctrine()->getRepository(Rooms::class)->findOneBy(['id' => $request->get('room')]);
@@ -140,7 +143,7 @@ class RoomController extends AbstractController
                         $user->addAddressbookInverse($room->getModerator());
                         $em->persist($user);
                         $snack = $this->translator->trans("Teilnehmer wurden eingeladen");
-                        $userService->addUser($user, $room);
+                        $this->userService->addUser($user, $room);
                     } else {
                         $falseEmail[] = $newMember;
                         $emails = implode(", ", $falseEmail);
@@ -176,7 +179,7 @@ class RoomController extends AbstractController
      * @Route("/room/user/remove", name="room_user_remove")
      */
     public
-    function roomUserRemove(Request $request, UserService $userService)
+    function roomUserRemove(Request $request)
     {
 
         $room = $this->getDoctrine()->getRepository(Rooms::class)->findOneBy(['id' => $request->get('room')]);
@@ -188,7 +191,7 @@ class RoomController extends AbstractController
             $em->persist($room);
             $em->flush();
             $snack = $this->translator->trans('Teilnehmer gelöscht');
-            $userService->removeRoom($user, $room);
+            $this->userService->removeRoom($user, $room);
         }
 
         return $this->redirectToRoute('dashboard', ['snack' => $snack]);
@@ -198,7 +201,7 @@ class RoomController extends AbstractController
      * @Route("/room/remove", name="room_remove")
      */
     public
-    function roomRemove(Request $request, UserService $userService)
+    function roomRemove(Request $request)
     {
 
         $room = $this->getDoctrine()->getRepository(Rooms::class)->findOneBy(['id' => $request->get('room')]);
@@ -206,7 +209,7 @@ class RoomController extends AbstractController
         if ($this->getUser() === $room->getModerator()) {
             $em = $this->getDoctrine()->getManager();
             foreach ($room->getUser() as $user) {
-                $userService->removeRoom($user, $room);
+                $this->userService->removeRoom($user, $room);
                 $room->removeUser($user);
                 $em->persist($room);
             }
@@ -222,7 +225,7 @@ class RoomController extends AbstractController
      * @Route("/room/clone", name="room_clone")
      */
     public
-    function roomClone(Request $request, UserService $userService, TranslatorInterface $translator, SchedulingService $schedulingService, ServerUserManagment $serverUserManagment)
+    function roomClone(Request $request, TranslatorInterface $translator, SchedulingService $schedulingService)
     {
 
         $roomOld = $this->getDoctrine()->getRepository(Rooms::class)->find($request->get('room'));
@@ -239,7 +242,7 @@ class RoomController extends AbstractController
 
         if ($this->getUser() === $room->getModerator()) {
 
-            $servers = $serverUserManagment->getServersFromUser($this->getUser());
+            $servers = $this->serverUserManagment->getServersFromUser($this->getUser());
             $form = $this->createForm(RoomType::class, $room, ['server' => $servers, 'action' => $this->generateUrl('room_clone', ['room' => $room->getId()])]);
             $form->handleRequest($request);
 
@@ -253,7 +256,7 @@ class RoomController extends AbstractController
 
                 $schedulingService->createScheduling($room);
                 foreach ($roomOld->getUser() as $user) {
-                    $userService->addUser($user, $room);
+                    $this->userService->addUser($user, $room);
                 }
                 $snack = $translator->trans('Teilnehmer bearbeitet');
                 return $this->redirectToRoute('dashboard', ['snack' => $snack, 'modalUrl' => base64_encode($this->generateUrl('room_add_user', array('room' => $room->getId())))]);
@@ -263,5 +266,7 @@ class RoomController extends AbstractController
 
         return $this->redirectToRoute('dashboard', ['snack' => $snack]);
     }
+    function getRoom($id= null){
 
+    }
 }
